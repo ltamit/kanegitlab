@@ -1,58 +1,64 @@
 stages:
-  - test
+  - trigger
 
 trigger_lambdatest_hyperexecute:
-  stage: test
-  image: curlimages/curl:8.5.0
-  rules:
-    - if: $CI_COMMIT_BRANCH   # run on all branches; adjust as needed
-  variables:
-    LT_API_URL: "https://test-manager-api.lambdatest.com/api/atm/v1/hyperexecute"
+  stage: trigger
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl jq
   script:
-    # 1) Build request payload
+    # 1) Build JSON payload (VALID JSON - no comments)
     - |
-      cat > payload.json << 'EOF'
-      {
-        "test_run_id": "${TEST_RUN_ID}",
-        "concurrency": 1,
-        "title": "${CI_PROJECT_NAME}-${CI_COMMIT_REF_NAME}-${CI_PIPELINE_ID}",
-        "console_log": false,
-        "network_logs": false,
-        "region": "${LT_REGION}",
-        "mobile_region": "${LT_MOBILE_REGION}",
-        "retry_on_failure": true,
-        "max_retries": 1
-      }
-      EOF
+      jq -n \
+        --arg test_run_id "$TEST_RUN_ID" \
+        --arg title "${CI_PROJECT_NAME}-${CI_COMMIT_REF_NAME}-${CI_PIPELINE_ID}" \
+        --arg region "${LT_REGION:-centralindia}" \
+        --arg mobile_region "${LT_MOBILE_REGION:-ap}" \
+        '{
+          test_run_id: $test_run_id,
+          concurrency: 1,
+          title: $title,
+          console_log: false,
+          network_logs: false,
+          network_full_har: false,
+          region: $region,
+          mobile_region: $mobile_region,
+          retry_on_failure: true,
+          max_retries: 1
+        }' > payload.json
 
-    # 2) Trigger the run (capture body + http code)
+    # 2) Call LambdaTest API and capture response + status code
     - |
-      echo "Triggering LambdaTest HyperExecute via Test Manager API..."
+      echo "Triggering LambdaTest HyperExecute run..."
       http_code=$(curl -sS -o response.json -w "%{http_code}" \
-        --location "$LT_API_URL" \
+        --location "https://test-manager-api.lambdatest.com/api/atm/v1/hyperexecute" \
         -H "Content-Type: application/json" \
         -H "Authorization: Basic ${LT_TM_BASE64_AUTH}" \
         --data @payload.json)
 
       echo "HTTP Status: $http_code"
-      cat response.json
+      cat response.json | jq .
 
-      # 3) Fail pipeline if not 2xx
+      # 3) Fail pipeline if trigger API didn't succeed
       if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-        echo "ERROR: Failed to trigger LambdaTest run."
+        echo "ERROR: Failed to trigger LambdaTest run"
         exit 1
       fi
 
-    # 4) Extract useful ids (best effort; won't fail if fields differ)
+    # 4) Extract an id (best-effort; depends on API response fields)
     - |
-      # jq is not present in curlimages by default; use grep/sed fallback
-      # If you prefer jq, use image: alpine and apk add jq curl.
-      echo "Attempting to extract run/build id from response..."
-      grep -Eo '"(id|build_id|run_id|hyperexecute_run_id)"\s*:\s*"[^"]+"' response.json || true
+      RUN_ID=$(jq -r '.run_id // .id // .build_id // empty' response.json)
+      echo "RUN_ID=$RUN_ID" | tee lt.env
+      echo "Triggered RUN_ID=$RUN_ID"
 
   artifacts:
     when: always
     paths:
       - payload.json
       - response.json
+    reports:
+      dotenv: lt.env
     expire_in: 7 days
+
+  # Optional: make it manual so you click-to-run
+  when: manual
