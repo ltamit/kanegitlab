@@ -1,51 +1,73 @@
-LambdaTest HyperExecute Trigger via GitLab CI
+# LambdaTest HyperExecute Trigger via GitLab CI
 
-This project demonstrates how to trigger a LambdaTest Test Manager run using the HyperExecute API from a GitLab CI/CD pipeline.
+This project shows how to trigger a LambdaTest Test Manager run using the HyperExecute API from a GitLab CI/CD pipeline.
 
-Prerequisites
+---
 
-Before setting up the pipeline, make sure you have:
+## Prerequisites
 
-A GitLab project
+Before starting, make sure you have:
 
-A valid LambdaTest Test Manager Test Run ID
+- A GitLab project
+- A LambdaTest Test Manager Test Run ID
+- LambdaTest Basic Auth credentials (Base64 encoded)
 
-LambdaTest Basic Auth (Base64 encoded) credentials
+---
 
-Step 1: Create a GitLab Project
+## Step 1: Create a GitLab Project
 
-Go to GitLab → New Project
+1. Go to GitLab.
+2. Click **New Project**.
+3. Select **Create blank project**.
+4. Enter a project name.
+5. Click **Create project**.
 
-Select Create blank project
+---
 
-Enter a project name
-
-Click Create project
-
-Step 2: Add CI/CD Variables
+## Step 2: Add CI/CD Variables
 
 Go to:
 
 Project → Settings → CI/CD → Variables → Add variable
 
-Add the following:
+Add the following variables:
 
-Required variables
-Key	Value	Notes
-LT_TM_BASE64_AUTH	Your Base64 auth string	Masked: Yes
-TEST_RUN_ID	Your LambdaTest test run id	Required
-Optional variables
-Key	Default	Description
-LT_REGION	centralindia	Web test region
-LT_MOBILE_REGION	ap	Mobile test region
-Step 3: Create .gitlab-ci.yml
+### Required
 
-Create a file in the root of the repository named:
+Variable name:
+LT_TM_BASE64_AUTH  
+Value:
+Your Base64 auth string  
+(Mark as Masked)
+
+Variable name:
+TEST_RUN_ID  
+Value:
+Your LambdaTest test run ID
+
+### Optional
+
+Variable name:
+LT_REGION  
+Value:
+centralindia
+
+Variable name:
+LT_MOBILE_REGION  
+Value:
+ap
+
+---
+
+## Step 3: Create the GitLab pipeline file
+
+In the root of your repository, create a file named:
 
 .gitlab-ci.yml
 
+Paste the following content:
 
-Paste the following configuration:
+```yaml
 stages:
   - trigger
 
@@ -55,7 +77,6 @@ trigger_lambdatest_hyperexecute:
   before_script:
     - apk add --no-cache curl jq
   script:
-    # 1) Build JSON payload (VALID JSON - no comments)
     - |
       jq -n \
         --arg test_run_id "$TEST_RUN_ID" \
@@ -75,7 +96,6 @@ trigger_lambdatest_hyperexecute:
           max_retries: 1
         }' > payload.json
 
-    # 2) Call LambdaTest API and capture response + status code
     - |
       echo "Triggering LambdaTest HyperExecute run..."
       http_code=$(curl -sS -o response.json -w "%{http_code}" \
@@ -87,13 +107,11 @@ trigger_lambdatest_hyperexecute:
       echo "HTTP Status: $http_code"
       cat response.json | jq .
 
-      # 3) Fail pipeline if trigger API didn't succeed
       if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
         echo "ERROR: Failed to trigger LambdaTest run"
         exit 1
       fi
 
-    # 4) Extract an id (best-effort; depends on API response fields)
     - |
       RUN_ID=$(jq -r '.run_id // .id // .build_id // empty' response.json)
       echo "RUN_ID=$RUN_ID" | tee lt.env
@@ -107,48 +125,40 @@ trigger_lambdatest_hyperexecute:
     reports:
       dotenv: lt.env
     expire_in: 7 days
+```
 
-  # Optional: make it manual so you click-to-run
-  when: manual
+Commit this file
 
-  Commit the file to the repository.
+---
 
-Step 4: Run the Pipeline
+## Step 4: Run the pipeline
+- Go to CI/CD → Pipelines
+- Click Run pipeline
+- Select your branch
+- Click Run pipeline
 
-Go to CI/CD → Pipelines
+---
 
-Click Run pipeline
+## Step 5: Verify the run
 
-Select the branch
+- Open the pipeline
+- Click the job: trigger_lambdatest_hyperexecute
+- Check the logs
 
-Click Run pipeline
+---
 
-Step 5: Verify Execution
-
-Open the running pipeline
-
-Click the job: trigger_lambdatest_hyperexecute
-
-Check the logs:
-
-HTTP status should be 200 or 201
-
-Response JSON will be printed
-
-Step 6: Download Artifacts (Optional)
+## Step 6: Download artifacts (optional)
 
 From the job page, download:
+- payload.json
+- response.json
 
-payload.json → request sent to API
+These contain the request and API response.
 
-response.json → API response
+---
 
-Notes
-
-Do not store credentials in the repository.
-
-Always use GitLab CI/CD variables for authentication.
-
-The pipeline currently triggers the run only.
-
-You can extend it to poll for completion using a status API.
+## Notes
+- Do not store credentials in the repository.
+- Always use GitLab CI/CD variables for authentication.
+- This pipeline only triggers the run.
+- You can extend it to wait for test completion using a status API.
