@@ -1,0 +1,58 @@
+stages:
+  - test
+
+trigger_lambdatest_hyperexecute:
+  stage: test
+  image: curlimages/curl:8.5.0
+  rules:
+    - if: $CI_COMMIT_BRANCH   # run on all branches; adjust as needed
+  variables:
+    LT_API_URL: "https://test-manager-api.lambdatest.com/api/atm/v1/hyperexecute"
+  script:
+    # 1) Build request payload
+    - |
+      cat > payload.json << 'EOF'
+      {
+        "test_run_id": "${TEST_RUN_ID}",
+        "concurrency": 1,
+        "title": "${CI_PROJECT_NAME}-${CI_COMMIT_REF_NAME}-${CI_PIPELINE_ID}",
+        "console_log": false,
+        "network_logs": false,
+        "region": "${LT_REGION}",
+        "mobile_region": "${LT_MOBILE_REGION}",
+        "retry_on_failure": true,
+        "max_retries": 1
+      }
+      EOF
+
+    # 2) Trigger the run (capture body + http code)
+    - |
+      echo "Triggering LambdaTest HyperExecute via Test Manager API..."
+      http_code=$(curl -sS -o response.json -w "%{http_code}" \
+        --location "$LT_API_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Basic ${LT_TM_BASE64_AUTH}" \
+        --data @payload.json)
+
+      echo "HTTP Status: $http_code"
+      cat response.json
+
+      # 3) Fail pipeline if not 2xx
+      if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+        echo "ERROR: Failed to trigger LambdaTest run."
+        exit 1
+      fi
+
+    # 4) Extract useful ids (best effort; won't fail if fields differ)
+    - |
+      # jq is not present in curlimages by default; use grep/sed fallback
+      # If you prefer jq, use image: alpine and apk add jq curl.
+      echo "Attempting to extract run/build id from response..."
+      grep -Eo '"(id|build_id|run_id|hyperexecute_run_id)"\s*:\s*"[^"]+"' response.json || true
+
+  artifacts:
+    when: always
+    paths:
+      - payload.json
+      - response.json
+    expire_in: 7 days
